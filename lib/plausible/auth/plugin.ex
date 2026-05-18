@@ -76,6 +76,18 @@ defmodule Plausible.Auth.Plugin do
   @doc "Whether to show the user avatar in the header."
   @callback show_avatar?() :: boolean()
 
+  @doc """
+  Resolve a team invitation input (e.g. a user ID) to an existing user.
+
+  Return the user if recognised, or `nil` if the input does not resolve to a
+  known user. Plugins that don't support user-ID-based invitations may return
+  `nil` for all inputs.
+  """
+  @callback find_invitee(input :: String.t()) :: Plausible.Auth.User.t() | nil
+
+  @doc "Whether the given input is a valid invitee identifier (e.g. user ID)."
+  @callback valid_invitee_input?(input :: String.t()) :: boolean()
+
   # --- Dispatcher ---
 
   @doc "Returns the configured auth plugin module, or nil."
@@ -174,6 +186,20 @@ defmodule Plausible.Auth.Plugin do
     case module() do
       nil -> true
       mod -> mod.show_avatar?()
+    end
+  end
+
+  def find_invitee(input) do
+    case module() do
+      nil -> nil
+      mod -> mod.find_invitee(input)
+    end
+  end
+
+  def valid_invitee_input?(input) do
+    case module() do
+      nil -> false
+      mod -> mod.valid_invitee_input?(input)
     end
   end
 
