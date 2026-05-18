@@ -2,6 +2,14 @@ import Config
 import Plausible.ConfigHelpers
 require Logger
 
+# Save PL_-prefixed env vars before Envy.load overwrites them.
+# Envy.load uses System.put_env which overwrites existing shell env vars.
+# We preserve any PL_ vars set via export so they take priority over .env files.
+pl_overrides =
+  System.get_env()
+  |> Enum.filter(fn {key, _} -> String.starts_with?(key, "PL_") end)
+  |> Map.new()
+
 if config_env() in [:dev, :test, :load] do
   Envy.load(["config/.env.#{config_env()}"])
 end
@@ -17,6 +25,19 @@ end
 if config_env() == :e2e_test do
   Envy.load(["config/.env.e2e_test"])
 end
+
+# Load .env.dev.local if it exists (not tracked by git).
+# Intended for local overrides like PL_ auth plugin configuration.
+local_env_file = "config/.env.dev.local"
+if File.exists?(local_env_file) do
+  Envy.load([local_env_file])
+end
+
+# Restore PL_-prefixed env vars that were set in the shell before any Envy.load.
+# Shell env vars take highest priority > .env.dev.local > .env.dev
+Enum.each(pl_overrides, fn {key, value} ->
+  System.put_env(key, value)
+end)
 
 config_dir = System.get_env("CONFIG_DIR", "/run/secrets")
 
@@ -191,6 +212,31 @@ totp_vault_key =
   end
 
 config :plausible, Plausible.Auth.TOTP, vault_key: totp_vault_key
+
+extra_origins =
+  get_var_from_path_or_env(config_dir, "PL_EXTRA_ORIGINS", "")
+  |> String.split(",", trim: true)
+
+auth_plugin_raw = get_var_from_path_or_env(config_dir, "PL_AUTH_PLUGIN", "")
+
+auth_plugin =
+  cond do
+    auth_plugin_raw != "" ->
+      String.to_atom("Elixir." <> auth_plugin_raw)
+
+    true ->
+      nil
+  end
+
+plugin_path = get_var_from_path_or_env(config_dir, "PL_PLUGIN_PATH", "")
+
+if plugin_path != "" do
+  Plausible.Auth.Plugin.load_plugin_file(plugin_path)
+end
+
+config :plausible,
+  auth_plugin: auth_plugin,
+  extra_origins: extra_origins
 
 build_metadata_raw = get_var_from_path_or_env(config_dir, "BUILD_METADATA", "{}")
 

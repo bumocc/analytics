@@ -286,7 +286,17 @@ defmodule PlausibleWeb.SettingsController do
 
   # Security actions
 
-  def update_email(conn, %{"user" => params}) do
+  def update_email(conn, params) do
+    if Plausible.Auth.Plugin.enabled?() do
+      conn
+      |> put_flash(:error, "Email changes are managed by the authentication provider.")
+      |> redirect(to: Routes.settings_path(conn, :security))
+    else
+      do_update_email(conn, params)
+    end
+  end
+
+  defp do_update_email(conn, %{"user" => params}) do
     user = conn.assigns.current_user
 
     with :ok <- Auth.rate_limit(:email_change_user, user),
@@ -314,6 +324,16 @@ defmodule PlausibleWeb.SettingsController do
   end
 
   def cancel_update_email(conn, _params) do
+    if Plausible.Auth.Plugin.enabled?() do
+      conn
+      |> put_flash(:error, "Email changes are managed by the authentication provider.")
+      |> redirect(to: Routes.settings_path(conn, :security))
+    else
+      do_cancel_update_email(conn)
+    end
+  end
+
+  defp do_cancel_update_email(conn) do
     changeset = Auth.User.cancel_email_changeset(conn.assigns.current_user)
 
     case Repo.update(changeset) do
@@ -332,7 +352,17 @@ defmodule PlausibleWeb.SettingsController do
     end
   end
 
-  def update_password(conn, %{"user" => params}) do
+  def update_password(conn, params) do
+    if Plausible.Auth.Plugin.enabled?() do
+      conn
+      |> put_flash(:error, "Password changes are managed by the authentication provider.")
+      |> redirect(to: Routes.settings_path(conn, :security))
+    else
+      do_update_password(conn, params)
+    end
+  end
+
+  defp do_update_password(conn, %{"user" => params}) do
     user = conn.assigns.current_user
     user_session = conn.assigns.current_user_session
 
@@ -356,6 +386,26 @@ defmodule PlausibleWeb.SettingsController do
 
         render_security(conn, password_changeset: changeset)
     end
+  end
+
+  defp do_update_password(user, params) do
+    changes = Auth.User.password_changeset(user, params)
+
+    Repo.transaction(fn ->
+      with {:ok, user} <- Repo.update(changes),
+           {:ok, user} <- validate_2fa_code(user, params["two_factor_code"]) do
+        user
+      else
+        {:error, :invalid_2fa} ->
+          changes
+          |> Ecto.Changeset.add_error(:password, "invalid 2FA code")
+          |> Map.put(:action, :validate)
+          |> Repo.rollback()
+
+        {:error, changeset} ->
+          Repo.rollback(changeset)
+      end
+    end)
   end
 
   defp render_security(conn, opts \\ []) do
@@ -392,26 +442,6 @@ defmodule PlausibleWeb.SettingsController do
     conn
     |> put_flash(:success, "Session logged out successfully")
     |> redirect(to: Routes.settings_path(conn, :security) <> "#user-sessions")
-  end
-
-  defp do_update_password(user, params) do
-    changes = Auth.User.password_changeset(user, params)
-
-    Repo.transaction(fn ->
-      with {:ok, user} <- Repo.update(changes),
-           {:ok, user} <- validate_2fa_code(user, params["two_factor_code"]) do
-        user
-      else
-        {:error, :invalid_2fa} ->
-          changes
-          |> Ecto.Changeset.add_error(:password, "invalid 2FA code")
-          |> Map.put(:action, :validate)
-          |> Repo.rollback()
-
-        {:error, changeset} ->
-          Repo.rollback(changeset)
-      end
-    end)
   end
 
   defp validate_2fa_code(user, code) do

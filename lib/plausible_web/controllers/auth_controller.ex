@@ -4,6 +4,7 @@ defmodule PlausibleWeb.AuthController do
   use Plausible
 
   alias Plausible.Auth
+  alias Plausible.Auth.Plugin
   alias Plausible.Teams
   alias PlausibleWeb.TwoFactor
   alias PlausibleWeb.UserAuth
@@ -18,10 +19,7 @@ defmodule PlausibleWeb.AuthController do
            :register_from_invitation,
            :login_form,
            :login,
-           :verify_2fa_form,
-           :verify_2fa,
-           :verify_2fa_recovery_code_form,
-           :verify_2fa_recovery_code
+           :center_server_callback
          ]
   )
 
@@ -38,8 +36,7 @@ defmodule PlausibleWeb.AuthController do
            :verify_2fa_setup,
            :disable_2fa,
            :generate_2fa_recovery_codes,
-           :select_team,
-           :switch_team
+           :select_team
          ]
   )
 
@@ -264,20 +261,30 @@ defmodule PlausibleWeb.AuthController do
 
   on_ee do
     def login_form(conn, params) do
-      login_preference = LoginPreference.get(conn)
-      error = Phoenix.Flash.get(conn.assigns.flash, :login_error)
+      if Plugin.enabled?() do
+        return_to = params["return_to"] || Routes.site_path(conn, :index)
+        redirect(conn, external: Plugin.login_url(return_to))
+      else
+        login_preference = LoginPreference.get(conn)
+        error = Phoenix.Flash.get(conn.assigns.flash, :login_error)
 
-      case {login_preference, params["prefer"], error} do
-        {"sso", nil, nil} ->
-          redirect(conn, to: Routes.sso_path(conn, :login_form, return_to: params["return_to"]))
+        case {login_preference, params["prefer"], error} do
+          {"sso", nil, nil} ->
+            redirect(conn, to: Routes.sso_path(conn, :login_form, return_to: params["return_to"]))
 
-        _ ->
-          render(conn, "login_form.html")
+          _ ->
+            render(conn, "login_form.html")
+        end
       end
     end
   else
-    def login_form(conn, _params) do
-      render(conn, "login_form.html")
+    def login_form(conn, params) do
+      if Plugin.enabled?() do
+        return_to = params["return_to"] || Routes.site_path(conn, :index)
+        redirect(conn, external: Plugin.login_url(return_to))
+      else
+        render(conn, "login_form.html")
+      end
     end
   end
 
@@ -609,9 +616,12 @@ defmodule PlausibleWeb.AuthController do
   def logout(conn, params) do
     redirect_to = Map.get(params, "redirect", "/")
 
-    conn
-    |> UserAuth.log_out_user()
-    |> redirect(to: redirect_to)
+    conn =
+      conn
+      |> UserAuth.log_out_user()
+      |> Plugin.on_logged_out()
+
+    redirect(conn, to: redirect_to)
   end
 
   def google_auth_callback(conn, %{"error" => error, "state" => state} = params) do
@@ -697,5 +707,25 @@ defmodule PlausibleWeb.AuthController do
 
   defp redirect_to_login(conn) do
     redirect(conn, to: Routes.auth_path(conn, :login_form))
+  end
+
+  def center_server_callback(conn, params) do
+    case Plugin.handle_callback(conn, params) do
+      {:ok, conn, user} ->
+        redirect_to = params["next"] || params["return_to"] || Routes.site_path(conn, :index)
+        UserAuth.log_in_user(conn, user, redirect_to)
+
+      {:error, :missing_token} ->
+        conn
+        |> put_flash(:login_error, "Missing authentication token.")
+        |> redirect(to: Routes.auth_path(conn, :login_form))
+
+      {:error, reason} ->
+        Logger.warning("Auth plugin callback failed: #{inspect(reason)}")
+
+        conn
+        |> put_flash(:login_error, "Authentication failed. Please try again.")
+        |> redirect(to: Routes.auth_path(conn, :login_form))
+    end
   end
 end

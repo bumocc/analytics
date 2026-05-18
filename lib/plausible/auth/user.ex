@@ -45,6 +45,7 @@ defmodule Plausible.Auth.User do
 
     # for context perseverance across sessions
     field :last_team_identifier, Ecto.UUID
+    field :center_server_id, :string
 
     on_ee do
       # Fields for SSO
@@ -129,7 +130,7 @@ defmodule Plausible.Auth.User do
 
   def changeset(user, attrs \\ %{}) do
     user
-    |> cast(attrs, [:email, :name, :email_verified, :theme, :notes])
+    |> cast(attrs, [:email, :name, :email_verified, :theme, :notes, :center_server_id])
     |> validate_required([:email, :name, :email_verified])
     |> unique_constraint(:email)
   end

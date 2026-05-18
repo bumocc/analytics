@@ -21,7 +21,7 @@ defmodule PlausibleWeb.Endpoint do
 
   socket("/live", Phoenix.LiveView.Socket,
     websocket: [
-      check_origin: true,
+      check_origin: {__MODULE__, :check_origin?, []},
       connect_info: [
         :peer_data,
         :uri,
@@ -90,6 +90,32 @@ defmodule PlausibleWeb.Endpoint do
 
   def secure_cookie?, do: config!(:secure_cookie)
 
+@default_origins ["//localhost", "//127.0.0.1", "//host.docker.internal"]
+
+  socket("/live", Phoenix.LiveView.Socket,
+    websocket: [
+      check_origin: {__MODULE__, :check_origin?, []},
+      connect_info: [
+        :peer_data,
+        :uri,
+        :user_agent,
+        session: {__MODULE__, :runtime_session_opts, []}
+      ]
+    ]
+  )
+
+  def check_origin?(origin) do
+    allowed = @default_origins ++ Application.get_env(:plausible, :extra_origins, [])
+    origin in allowed or URI.parse(origin).host in Enum.map(allowed, &parse_host/1)
+  end
+
+  defp parse_host(origin_entry) do
+    case URI.parse(origin_entry) do
+      %URI{host: host} when is_binary(host) and host != "" -> host
+      _ -> String.trim_leading(origin_entry, "//") |> String.split(":") |> List.first()
+    end
+  end
+
   def websocket_url() do
     config!(:websocket_url)
   end
@@ -105,8 +131,14 @@ defmodule PlausibleWeb.Endpoint do
         # is used to inject the domain - this way we can authenticate
         # websocket requests within single root domain, in case websocket_url()
         # returns a ws{s}:// scheme (in which case SameSite=Lax is not applicable).
-        Keyword.put(@session_options, :domain, host())
-        |> Keyword.put(:key, "_plausible_#{Application.fetch_env!(:plausible, :environment)}")
+        base =
+          if Mix.env() == :dev do
+            @session_options
+          else
+            Keyword.put(@session_options, :domain, host())
+          end
+
+        Keyword.put(base, :key, "_plausible_#{Application.fetch_env!(:plausible, :environment)}")
       else
         # CE setup is simpler and we don't need to worry about WS domain being different
         @session_options
