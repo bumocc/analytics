@@ -65,6 +65,16 @@
                   </.button_link>
                 </div>
               </li>
+              <li :if={Plausible.Auth.Plugin.subscription_page_url()}>
+                <a
+                  href={Plausible.Auth.Plugin.subscription_page_url()}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="text-sm font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"
+                >
+                  Subscription
+                </a>
+              </li>
               <li class="w-full sm:w-auto">
                 <.dropdown>
                   <:button class="flex items-center gap-2 pl-3 pr-1.5 py-2 rounded-md transition-colors duration-150 hover:bg-gray-100 dark:hover:bg-gray-800">

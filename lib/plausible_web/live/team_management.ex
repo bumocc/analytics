@@ -5,7 +5,6 @@ defmodule PlausibleWeb.Live.TeamManagement do
   use PlausibleWeb, :live_view
 
   alias Plausible.Teams
-  alias Plausible.Auth.Plugin
   alias Plausible.Auth.User
   import PlausibleWeb.Live.Components.Team
 
@@ -56,13 +55,9 @@ defmodule PlausibleWeb.Live.TeamManagement do
           <div class="flex-1">
             <.input
               name="input-email"
-              type={if Plugin.enabled?(), do: "text", else: "email"}
+              type="email"
               value={@input_email}
-              placeholder={
-                if Plugin.enabled?(),
-                  do: "Enter user ID (e.g. xxx@center.local)",
-                  else: "Enter e-mail"
-              }
+              placeholder="Enter e-mail"
               phx-debounce={200}
               readonly={at_limit?(@layout, @team_members_limit) or @my_role not in [:admin, :owner]}
               mt?={false}
@@ -187,35 +182,39 @@ defmodule PlausibleWeb.Live.TeamManagement do
         %{"input-email" => email},
         %{assigns: %{layout: layout, input_role: role}} = socket
       ) do
-    input = String.trim(email)
+    email = String.trim(email)
+
+    existing_entry = Map.get(layout, email)
 
     socket =
-      case resolve_invitee_email(input) do
-        {:ok, resolved_email} ->
-          existing_entry = Map.get(layout, resolved_email)
-
-          cond do
-            existing_entry && existing_entry.queued_op == :delete ->
-              # bring back previously deleted entry, and only update role
-              socket
-              |> update_layout(Layout.update_role(layout, resolved_email, role))
-              |> assign(input_email: "")
-
-            existing_entry ->
-              socket
-              |> assign(input_email: input)
-              |> put_live_flash(:error, already_in_layout_error_message())
-
-            true ->
-              socket
-              |> update_layout(Layout.schedule_send(layout, resolved_email, role))
-              |> assign(input_email: "")
-          end
-
-        {:error, message} ->
+      cond do
+        existing_entry && existing_entry.queued_op == :delete ->
+          # bring back previously deleted entry (either invitation or membership), and only update role
           socket
-          |> assign(input_email: input)
-          |> put_live_flash(:error, message)
+          |> update_layout(Layout.update_role(layout, email, role))
+          |> assign(input_email: "")
+
+        existing_entry ->
+          # trying to add e-mail that's already in the layout
+          socket
+          |> assign(input_email: email)
+          |> put_live_flash(
+            :error,
+            "Make sure the e-mail is valid and is not taken already in your team layout"
+          )
+
+        valid_email?(email) ->
+          socket
+          |> update_layout(Layout.schedule_send(layout, email, role))
+          |> assign(input_email: "")
+
+        true ->
+          socket
+          |> assign(input_email: email)
+          |> put_live_flash(
+            :error,
+            "Make sure the e-mail is valid and is not taken already in your team layout"
+          )
       end
 
     {:noreply, socket}
@@ -265,38 +264,6 @@ defmodule PlausibleWeb.Live.TeamManagement do
 
   defp valid_email?(email) do
     String.contains?(email, "@") and String.contains?(email, ".")
-  end
-
-  # Resolves an input to the email used as the invitee key in the layout.
-  #
-  # When an auth plugin is enabled the input is treated as a user ID; we look
-  # up the corresponding user (created on first plugin login) and use their
-  # real email so existing email-based invitation matching keeps working.
-  defp resolve_invitee_email(input) do
-    cond do
-      Plugin.enabled?() and not Plugin.valid_invitee_input?(input) ->
-        {:error, "Make sure the user ID is valid (e.g. xxx@center.local)"}
-
-      Plugin.enabled?() ->
-        case Plugin.find_invitee(input) do
-          %User{email: email} -> {:ok, email}
-          _ -> {:error, "User has not logged in yet — they must sign in once before being invited"}
-        end
-
-      valid_email?(input) ->
-        {:ok, input}
-
-      true ->
-        {:error, "Make sure the e-mail is valid"}
-    end
-  end
-
-  defp already_in_layout_error_message do
-    if Plugin.enabled?() do
-      "This user is already in your team layout"
-    else
-      "This e-mail is already in your team layout"
-    end
   end
 
   defp update_layout(socket, layout) do
